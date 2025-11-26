@@ -329,6 +329,11 @@ TEST_TOOL="unknown"
 ARTIFACT_TYPE="unknown"
 RUNTIME_VERSION="unknown"
 BEST_SCORE=-1
+CURRENT_MODULE_REL=""
+ENV_FILES_JSON="[]"
+LICENSES_JSON="[]"
+CI_GITLAB="false"
+CI_GITHUB="false"
 
 declare -a NOTES=()
 declare -a RUNTIME_CANDIDATES=()
@@ -437,6 +442,34 @@ consider_candidate() {
   fi
 }
 
+# Utility: pick best-scored candidate from parallel arrays, fallback if empty.
+best_scored_value() {
+  local -n names_arr="$1"
+  local -n scores_arr="$2"
+  local fallback="$3"
+
+  local best="$fallback"
+  local best_score=-1
+  local i
+  for i in "${!names_arr[@]}"; do
+    if (( scores_arr[$i] > best_score )) && [[ -n "${names_arr[$i]}" ]]; then
+      best_score="${scores_arr[$i]}"
+      best="${names_arr[$i]}"
+    fi
+  done
+  echo "$best"
+}
+
+append_unique() {
+  local -n arr="$1"
+  local val="$2"
+  local i
+  for i in "${arr[@]}"; do
+    [[ "$i" == "$val" ]] && return 0
+  done
+  arr+=("$val")
+}
+
 #######################################
 # Агрегация по репозиторию
 #######################################
@@ -458,6 +491,11 @@ declare -a REPO_BUILD_CMD_SCORES=()
 declare -a REPO_TEST_CMDS=()
 declare -a REPO_TEST_CMD_SCORES=()
 declare -a REPO_NOTES=()
+declare -a REPO_PACKAGE_MANAGERS=()
+declare -a REPO_PACKAGE_MANAGER_SCORES=()
+declare -a REPO_PORTS=()
+declare -a REPO_PORT_SCORES=()
+declare -a MODULE_JSONS=()
 
 repo_reset() {
   REPO_LANGS=()
@@ -477,6 +515,11 @@ repo_reset() {
   REPO_TEST_CMDS=()
   REPO_TEST_CMD_SCORES=()
   REPO_NOTES=()
+  REPO_PACKAGE_MANAGERS=()
+  REPO_PACKAGE_MANAGER_SCORES=()
+  REPO_PORTS=()
+  REPO_PORT_SCORES=()
+  MODULE_JSONS=()
 }
 
 repo_agg_lang() {
@@ -554,6 +597,36 @@ repo_agg_artifact_type() {
   REPO_ARTIFACT_TYPE_SCORES+=("$score")
 }
 
+repo_agg_package_manager() {
+  local pm="$1"
+  local score="$2"
+  [[ -z "$pm" || "$pm" == "unknown" ]] && return 0
+  local i
+  for i in "${!REPO_PACKAGE_MANAGERS[@]}"; do
+    if [[ "${REPO_PACKAGE_MANAGERS[$i]}" == "$pm" ]]; then
+      REPO_PACKAGE_MANAGER_SCORES[$i]=$(( REPO_PACKAGE_MANAGER_SCORES[$i] + score ))
+      return 0
+    fi
+  done
+  REPO_PACKAGE_MANAGERS+=("$pm")
+  REPO_PACKAGE_MANAGER_SCORES+=("$score")
+}
+
+repo_agg_port() {
+  local port="$1"
+  local score="$2"
+  [[ -z "$port" ]] && return 0
+  local i
+  for i in "${!REPO_PORTS[@]}"; do
+    if [[ "${REPO_PORTS[$i]}" == "$port" ]]; then
+      REPO_PORT_SCORES[$i]=$(( REPO_PORT_SCORES[$i] + score ))
+      return 0
+    fi
+  done
+  REPO_PORTS+=("$port")
+  REPO_PORT_SCORES+=("$score")
+}
+
 repo_agg_runtime_version() {
   local rv="$1"
   local score="$2"
@@ -602,6 +675,119 @@ repo_agg_test_cmd() {
   done
   REPO_TEST_CMDS+=("$cmd")
   REPO_TEST_CMD_SCORES+=("$score")
+}
+
+extract_ports_from_file() {
+  local file="$1"
+  local -a found=()
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    if [[ "$line" =~ ^[Pp][Oo][Rr][Tt][=:[:space:]]*([0-9]{2,5}) ]]; then
+      append_unique found "${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^EXPOSE[[:space:]]+([0-9]{2,5}) ]]; then
+      append_unique found "${BASH_REMATCH[1]}"
+    fi
+  done < "$file"
+  printf '%s\n' "${found[@]}"
+}
+
+detect_module_ports() {
+  local module_dir="$1"
+  local -a ports=()
+
+  while IFS= read -r df; do
+    [[ -z "$df" ]] && continue
+    while IFS= read -r p; do
+      [[ -z "$p" ]] && continue
+      append_unique ports "$p"
+    done < <(extract_ports_from_file "$df")
+  done < <(find "$module_dir" -maxdepth 2 -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f -iname 'dockerfile' -print 2>/dev/null || true)
+
+  while IFS= read -r envf; do
+    [[ -z "$envf" ]] && continue
+    while IFS= read -r p; do
+      [[ -z "$p" ]] && continue
+      append_unique ports "$p"
+    done < <(extract_ports_from_file "$envf")
+  done < <(find "$module_dir" -maxdepth 3 -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f \( -name '.env' -o -name '.env.example' -o -name 'application.properties' -o -name 'application.yml' -o -name 'application.yaml' \) -print 2>/dev/null || true)
+
+  printf '%s\n' "${ports[@]}"
+}
+
+record_module() {
+  local module_dir="$1"
+  local module_rel="${CURRENT_MODULE_REL:-.}"
+
+  local runtime_best
+  runtime_best="$(best_scored_value RUNTIME_CANDIDATES RUNTIME_CANDIDATE_SCORES "$RUNTIME_VERSION")"
+  local build_cmd_best
+  build_cmd_best="$(best_scored_value BUILD_CMD_CANDIDATES BUILD_CMD_CANDIDATE_SCORES "")"
+  local test_cmd_best
+  test_cmd_best="$(best_scored_value TEST_CMD_CANDIDATES TEST_CMD_CANDIDATE_SCORES "")"
+
+  local package_manager="unknown"
+  case "$BUILD_TOOL" in
+    npm|yarn|pnpm|poetry|pipenv|pip|bundler|maven|gradle|ant|go)
+      package_manager="$BUILD_TOOL"
+      ;;
+  esac
+
+  local -a ports_arr=()
+  while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    append_unique ports_arr "$p"
+    repo_agg_port "$p" "$BEST_SCORE"
+  done < <(detect_module_ports "$module_dir")
+
+  local ports_json="["
+  local idx=0
+  for p in "${ports_arr[@]}"; do
+    [[ $idx -gt 0 ]] && ports_json+=", "
+    ports_json+="\"$(json_escape "$p")\""
+    idx=$((idx+1))
+  done
+  ports_json+="]"
+
+  local notes_json="["
+  for i in "${!NOTES[@]}"; do
+    [[ $i -gt 0 ]] && notes_json+=", "
+    notes_json+="\"$(json_escape "${NOTES[$i]}")\""
+  done
+  notes_json+="]"
+
+  local dockerfiles_mod_json="["
+  idx=0
+  while IFS= read -r df; do
+    [[ -z "$df" ]] && continue
+    [[ $idx -gt 0 ]] && dockerfiles_mod_json+=", "
+    dockerfiles_mod_json+="\"$(json_escape "$df")\""
+    idx=$((idx+1))
+  done < <(find "$module_dir" -maxdepth 2 -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f -iname 'dockerfile' -print 2>/dev/null || true)
+  dockerfiles_mod_json+="]"
+
+  repo_agg_package_manager "$package_manager" "$BEST_SCORE"
+
+  local module_json
+  module_json="$(cat <<EOF
+  {
+    "path": "$(json_escape "$module_rel")",
+    "language": "$(json_escape "$LANGUAGE")",
+    "framework": "$(json_escape "$FRAMEWORK")",
+    "build_tool": "$(json_escape "$BUILD_TOOL")",
+    "test_tool": "$(json_escape "$TEST_TOOL")",
+    "artifact_type": "$(json_escape "$ARTIFACT_TYPE")",
+    "runtime_version": "$(json_escape "$runtime_best")",
+    "build_command": "$(json_escape "$build_cmd_best")",
+    "test_command": "$(json_escape "$test_cmd_best")",
+    "package_manager": "$(json_escape "$package_manager")",
+    "ports": $ports_json,
+    "dockerfiles": $dockerfiles_mod_json,
+    "notes": $notes_json
+  }
+EOF
+)"
+
+  MODULE_JSONS+=("$module_json")
 }
 
 repo_add_note() {
@@ -1172,6 +1358,7 @@ analyze_module() {
   detect_python "$module_dir"
   detect_java_kotlin "$module_dir"
 
+  record_module "$module_dir"
   aggregate_current_module_into_repo
 }
 
@@ -1280,6 +1467,7 @@ run_analyze() {
 
   local idx
   for idx in "${!MODULE_DIRS[@]}"; do
+    CURRENT_MODULE_REL="${MODULE_RELS[$idx]}"
     analyze_module "${MODULE_DIRS[$idx]}"
   done
 
