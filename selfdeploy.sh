@@ -1443,6 +1443,10 @@ run_analyze() {
   local tmp_dir=""
   local dockerfiles_json="[]"
   local compose_json="[]"
+  ENV_FILES_JSON="[]"
+  LICENSES_JSON="[]"
+  CI_GITLAB="false"
+  CI_GITHUB="false"
 
   if [[ -n "$REPO_URL" ]]; then
     tmp_dir="$(mktemp -d "/tmp/selfdeploy_repo.XXXXXX")"
@@ -1471,6 +1475,17 @@ run_analyze() {
     analyze_module "${MODULE_DIRS[$idx]}"
   done
 
+  ENV_FILES_JSON="$(find "$root" -maxdepth 3 -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f \( -name '.env' -o -name '.env.example' -o -name 'application.properties' -o -name 'application.yml' -o -name 'application.yaml' \) -print 2>/dev/null | awk '{printf "\"%s\",", $0}' | sed 's/,$//' | sed 's/^/[/' | sed 's/$/]/')"
+  [[ -z "$ENV_FILES_JSON" ]] && ENV_FILES_JSON="[]"
+  LICENSES_JSON="$(find "$root" -maxdepth 2 -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f -iname 'LICENSE*' -print 2>/dev/null | awk '{printf "\"%s\",", $0}' | sed 's/,$//' | sed 's/^/[/' | sed 's/$/]/')"
+  [[ -z "$LICENSES_JSON" ]] && LICENSES_JSON="[]"
+  if find "$root" -maxdepth 2 -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f -name '.gitlab-ci.yml' -print -quit >/dev/null 2>&1; then
+    CI_GITLAB="true"
+  fi
+  if find "$root/.github/workflows" -maxdepth 1 -type f -name '*.yml' -o -name '*.yaml' 2>/dev/null | head -n1 >/dev/null; then
+    CI_GITHUB="true"
+  fi
+
   local dockerflag="false"
   if has_dockerfile "$root"; then
     dockerflag="true"
@@ -1480,7 +1495,57 @@ run_analyze() {
   [[ -z "$dockerfiles_json" ]] && dockerfiles_json="[]"
   [[ -z "$compose_json" ]] && compose_json="[]"
 
-  print_repo_json "$root" "$dockerflag" "$dockerfiles_json" "$compose_json"
+  print_repo_json_v2 "$root" "$dockerflag" "$dockerfiles_json" "$compose_json"
+}
+
+print_repo_json_v2() {
+  local root="$1"
+  local dockerflag="$2"
+  local dockerfiles_json="$3"
+  local compose_json="$4"
+
+  local module_count="${#MODULE_JSONS[@]}"
+  local monorepo="false"
+  (( module_count > 1 )) && monorepo="true"
+
+  printf '{\n'
+  printf '  "root_path": "%s",\n' "$(json_escape "$root")"
+  printf '  "has_dockerfile": %s,\n' "$dockerflag"
+  printf '  "dockerfiles": %s,\n' "$dockerfiles_json"
+  printf '  "docker_compose_files": %s,\n' "$compose_json"
+  printf '  "module_count": %s,\n' "$module_count"
+  printf '  "monorepo": %s,\n' "$monorepo"
+  printf '  "ci_present": {"gitlab": %s, "github_actions": %s},\n' "$CI_GITLAB" "$CI_GITHUB"
+  printf '  "env_files": %s,\n' "$ENV_FILES_JSON"
+  printf '  "licenses": %s,\n' "$LICENSES_JSON"
+
+  print_sorted_list_from_arrays "languages" REPO_LANGS REPO_LANG_SCORES
+  print_sorted_list_from_arrays "frameworks" REPO_FRAMEWORKS REPO_FRAMEWORK_SCORES
+  print_sorted_list_from_arrays "build_tools" REPO_BUILD_TOOLS REPO_BUILD_TOOL_SCORES
+  print_sorted_list_from_arrays "package_managers" REPO_PACKAGE_MANAGERS REPO_PACKAGE_MANAGER_SCORES
+  print_sorted_list_from_arrays "test_tools" REPO_TEST_TOOLS REPO_TEST_TOOL_SCORES
+  print_sorted_list_from_arrays "artifact_types" REPO_ARTIFACT_TYPES REPO_ARTIFACT_TYPE_SCORES
+  print_sorted_list_from_arrays "runtime_versions" REPO_RUNTIME_VERSIONS REPO_RUNTIME_VERSION_SCORES
+  print_sorted_list_from_arrays "build_commands" REPO_BUILD_CMDS REPO_BUILD_CMD_SCORES
+  print_sorted_list_from_arrays "test_commands" REPO_TEST_CMDS REPO_TEST_CMD_SCORES
+  print_sorted_list_from_arrays "ports" REPO_PORTS REPO_PORT_SCORES
+
+  printf '  "modules": [\n'
+  local i
+  for i in "${!MODULE_JSONS[@]}"; do
+    [[ $i -gt 0 ]] && printf ',\n'
+    printf '%s' "${MODULE_JSONS[$i]}"
+  done
+  printf '\n  ],\n'
+
+  printf '  "notes": ['
+  for i in "${!REPO_NOTES[@]}"; do
+    [[ $i -gt 0 ]] && printf ', '
+    printf '"%s"' "$(json_escape "${REPO_NOTES[$i]}")"
+  done
+  printf ']\n'
+
+  printf '}\n'
 }
 
 #######################################
