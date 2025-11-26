@@ -122,6 +122,14 @@ extract_gradle_toolchain_version() {
   ' "$file" 2>/dev/null || true
 }
 
+extract_gradle_inline_java_version() {
+  local file="$1"
+  awk 'BEGIN{IGNORECASE=1}
+    match($0, /JavaVersion\.VERSION_([0-9]+)/, a) { print a[1]; exit }
+    match($0, /javaVersion[ \t]*=[ \t]*JavaVersion\.VERSION_([0-9]+)/, a) { print a[1]; exit }
+  ' "$file" 2>/dev/null || true
+}
+
 extract_gradle_properties_java_version_in_file() {
   local file="$1"
   awk 'BEGIN{IGNORECASE=1}
@@ -131,14 +139,34 @@ extract_gradle_properties_java_version_in_file() {
 
 extract_gradle_properties_java_version() {
   local dir="$1"
-  local max_up=4
-  local attempts=0
-  while [[ $attempts -lt $max_up && -n "$dir" && "$dir" != "/" ]]; do
-    attempts=$((attempts+1))
+  while [[ -n "$dir" && "$dir" != "/" ]]; do
     if [[ -f "$dir/gradle.properties" ]]; then
       local v
       v="$(extract_gradle_properties_java_version_in_file "$dir/gradle.properties")"
       [[ -n "${v:-}" ]] && { echo "$v"; return; }
+    fi
+    dir="$(cd "$dir/.." 2>/dev/null && pwd)"
+  done
+}
+
+extract_gradle_java_version_upwards() {
+  local dir="$1"
+  while [[ -n "$dir" && "$dir" != "/" ]]; do
+    local gf=""
+    if [[ -f "$dir/build.gradle.kts" ]]; then
+      gf="$dir/build.gradle.kts"
+    elif [[ -f "$dir/build.gradle" ]]; then
+      gf="$dir/build.gradle"
+    fi
+    if [[ -n "$gf" ]]; then
+      local v
+      v="$(extract_gradle_toolchain_version "$gf")"
+      [[ -z "${v:-}" ]] && v="$(extract_gradle_inline_java_version "$gf")"
+      [[ -z "${v:-}" ]] && v="$(extract_gradle_compat_version "$gf")"
+      if [[ -n "${v:-}" ]]; then
+        echo "$v"
+        return
+      fi
     fi
     dir="$(cd "$dir/.." 2>/dev/null && pwd)"
   done
@@ -983,6 +1011,14 @@ detect_java_kotlin() {
       if [[ -n "${gpv:-}" ]]; then
         runtime_version="java-$gpv"
         add_note "Java: version $gpv from gradle.properties"
+      fi
+      if [[ "$runtime_version" == "unknown" ]]; then
+        local gfilev
+        gfilev="$(extract_gradle_java_version_upwards "$module_dir")"
+        if [[ -n "${gfilev:-}" ]]; then
+          runtime_version="java-$gfilev"
+          add_note "Java: version $gfilev from Gradle files"
+        fi
       fi
     fi
     local gradle_cmd="./gradlew"
