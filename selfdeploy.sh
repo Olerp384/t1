@@ -208,6 +208,11 @@ extract_maven_java_version_in_file() {
     match($0, /<[^>]*java\.version[^>]*>[ \t]*([^<[:space:]]+)/, a) { print a[1]; exit }
   ' "$file" 2>/dev/null || true)"
 
+  if [[ -n "$v" && ! "$v" =~ ^[0-9]+(\.[0-9]+)?$ && ! "$v" =~ ^\$\{[^}]+\}$ ]]; then
+    # Ignore non-numeric, non-property values (e.g. boolean <release>true</release>)
+    v=""
+  fi
+
   if [[ "$v" =~ ^\$\{([^}]+)\}$ ]]; then
     ref="${BASH_REMATCH[1]}"
     v="$(awk -v p="$ref" 'BEGIN{IGNORECASE=1}
