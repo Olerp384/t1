@@ -1575,6 +1575,7 @@ copy_python_templates() {
   local template_name="$1"
   local target_dir="$2"
   local py_ver="$3"
+  local framework="$4"
 
   local script_dir
   script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -1589,8 +1590,10 @@ copy_python_templates() {
   fi
 
   local target_docker="$target_dir/Dockerfile"
+  local existing_docker=0
   if [[ -f "$target_docker" ]]; then
     echo "Dockerfile already exists at $target_docker, skipping copy"
+    existing_docker=1
   else
     cp "$src_file" "$target_docker"
     if [[ -n "$py_ver" ]]; then
@@ -1600,11 +1603,19 @@ copy_python_templates() {
     echo "Copied Dockerfile from $template_name to $target_docker"
   fi
 
+  # If Dockerfile уже есть, не создаём compose, чтобы не плодить невалидные команды/порты.
+  if (( existing_docker == 1 )); then
+    return 0
+  fi
+
   local target_compose="$target_dir/docker-compose.yml"
   if [[ -f "$target_compose" ]]; then
     echo "docker-compose.yml already exists at $target_compose, skipping copy"
   else
     cp "$compose_src" "$target_compose"
+    if [[ -n "$py_ver" ]]; then
+      sed -i'' -e "s/PYTHON_VERSION: .*/PYTHON_VERSION: $py_ver/" "$target_compose"
+    fi
     # Adjust command based on template_name
     case "$template_name" in
       python-uvicorn)

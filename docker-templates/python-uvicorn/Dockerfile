@@ -18,8 +18,13 @@ COPY pyproject.toml poetry.lock* requirements*.txt ./
 RUN if [ -f pyproject.toml ]; then \
       pip install --no-cache-dir poetry==1.8.3 && \
       poetry config virtualenvs.create false && poetry install --no-interaction --no-ansi ; \
-    elif ls requirements*.txt >/dev/null 2>&1; then \
-      pip install --no-cache-dir -r requirements.txt ; \
+    else \
+      req_file="$(ls requirements*.txt 2>/dev/null | head -n1 || true)" ; \
+      if [ -n "$req_file" ]; then \
+        pip install --no-cache-dir -r "$req_file" ; \
+      else \
+        echo "No dependency files found; skipping install"; \
+      fi ; \
     fi
 
 COPY . .

@@ -14,7 +14,13 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY requirements*.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Install first matching requirements file if present to avoid failing on missing names
+RUN req_file="$(ls requirements*.txt 2>/dev/null | head -n1 || true)" \
+ && if [ -n "$req_file" ]; then \
+      pip install --no-cache-dir -r "$req_file"; \
+    else \
+      echo "No requirements*.txt found; skipping dependency install"; \
+    fi
 
 COPY . .
 
