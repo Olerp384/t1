@@ -180,11 +180,18 @@ extract_gradle_java_version_upwards() {
 extract_java_version_grep_repo() {
   local dir="$1"
   local v=""
-  # JavaVersion.VERSION_XX patterns
-  v="$(find "$dir" -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f \( -name 'build.gradle' -o -name 'build.gradle.kts' -o -name 'settings.gradle' -o -name 'settings.gradle.kts' -o -name 'gradle.properties' -o -name 'pom.xml' \) -print 2>/dev/null | xargs -I{} sh -c "grep -m1 -o -E 'JavaVersion\\.VERSION_[0-9]+' '{}' || true" | head -n1 | sed -E 's/.*VERSION_([0-9]+).*/\\1/')" || true
+  local files
+
+  files="$(find "$dir" -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f \( -name 'build.gradle' -o -name 'build.gradle.kts' -o -name 'settings.gradle' -o -name 'settings.gradle.kts' -o -name 'gradle.properties' -o -name 'pom.xml' \) -print 2>/dev/null || true)"
+  if [[ -n "$files" ]]; then
+    v="$(printf '%s\n' "$files" | xargs -I{} sh -c "grep -m1 -o -E 'JavaVersion\\.VERSION_[0-9]+' '{}' || true" | head -n1 | sed -E 's/.*VERSION_([0-9]+).*/\\1/' || true)"
+  fi
   [[ -n "${v:-}" ]] && { echo "$v"; return; }
-  # key/value style javaVersion=17 or java.version=17
-  v="$(find "$dir" -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f \( -name 'gradle.properties' -o -name 'build.gradle' -o -name 'build.gradle.kts' -o -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print 2>/dev/null | xargs -I{} sh -c "grep -m1 -E 'java(Version|\\.version|_version|RuntimeVersion|minRuntimeVersion)[^0-9]*[ =:]?[ \t]*[0-9]{1,2}' '{}' || true" | head -n1 | sed -E 's/.*([0-9]{1,2}).*/\\1/')" || true
+
+  files="$(find "$dir" -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f \( -name 'gradle.properties' -o -name 'build.gradle' -o -name 'build.gradle.kts' -o -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print 2>/dev/null || true)"
+  if [[ -n "$files" ]]; then
+    v="$(printf '%s\n' "$files" | xargs -I{} sh -c "grep -m1 -E 'java(Version|\\.version|_version|RuntimeVersion|minRuntimeVersion)[^0-9]*[ =:]?[ \\t]*[0-9]{1,2}' '{}' || true" | head -n1 | sed -E 's/.*([0-9]{1,2}).*/\\1/' || true)"
+  fi
   [[ -n "${v:-}" ]] && echo "$v"
 }
 
