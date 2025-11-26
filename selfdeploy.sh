@@ -632,6 +632,10 @@ aggregate_current_module_into_repo() {
   for i in "${!RUNTIME_CANDIDATES[@]}"; do
     repo_agg_runtime_version "${RUNTIME_CANDIDATES[$i]}" "${RUNTIME_CANDIDATE_SCORES[$i]}"
   done
+  # Fallback: if no candidates were added but we still inferred a runtime_version, record it.
+  if [[ "$RUNTIME_VERSION" != "unknown" && -n "$RUNTIME_VERSION" ]]; then
+    repo_agg_runtime_version "$RUNTIME_VERSION" "$score"
+  fi
 
   for i in "${!BUILD_CMD_CANDIDATES[@]}"; do
     repo_agg_build_cmd "${BUILD_CMD_CANDIDATES[$i]}" "${BUILD_CMD_CANDIDATE_SCORES[$i]}"
