@@ -163,6 +163,7 @@ FRAMEWORK="unknown"
 BUILD_TOOL="unknown"
 TEST_TOOL="unknown"
 ARTIFACT_TYPE="unknown"
+RUNTIME_VERSION="unknown"
 BEST_SCORE=-1
 
 declare -a NOTES=()
@@ -173,6 +174,7 @@ reset_detection_state() {
   BUILD_TOOL="unknown"
   TEST_TOOL="unknown"
   ARTIFACT_TYPE="unknown"
+  RUNTIME_VERSION="unknown"
   BEST_SCORE=-1
   NOTES=()
 }
@@ -219,6 +221,8 @@ declare -a REPO_TEST_TOOLS=()
 declare -a REPO_TEST_TOOL_SCORES=()
 declare -a REPO_ARTIFACT_TYPES=()
 declare -a REPO_ARTIFACT_TYPE_SCORES=()
+declare -a REPO_RUNTIME_VERSIONS=()
+declare -a REPO_RUNTIME_VERSION_SCORES=()
 declare -a REPO_NOTES=()
 
 repo_reset() {
@@ -232,6 +236,8 @@ repo_reset() {
   REPO_TEST_TOOL_SCORES=()
   REPO_ARTIFACT_TYPES=()
   REPO_ARTIFACT_TYPE_SCORES=()
+  REPO_RUNTIME_VERSIONS=()
+  REPO_RUNTIME_VERSION_SCORES=()
   REPO_NOTES=()
 }
 
@@ -310,6 +316,21 @@ repo_agg_artifact_type() {
   REPO_ARTIFACT_TYPE_SCORES+=("$score")
 }
 
+repo_agg_runtime_version() {
+  local rv="$1"
+  local score="$2"
+  [[ "$rv" == "unknown" || -z "$rv" ]] && return 0
+  local i
+  for i in "${!REPO_RUNTIME_VERSIONS[@]}"; do
+    if [[ "${REPO_RUNTIME_VERSIONS[$i]}" == "$rv" ]]; then
+      REPO_RUNTIME_VERSION_SCORES[$i]=$(( REPO_RUNTIME_VERSION_SCORES[$i] + score ))
+      return 0
+    fi
+  done
+  REPO_RUNTIME_VERSIONS+=("$rv")
+  REPO_RUNTIME_VERSION_SCORES+=("$score")
+}
+
 repo_add_note() {
   local note="$1"
   local n
@@ -328,6 +349,7 @@ aggregate_current_module_into_repo() {
   repo_agg_build_tool "$BUILD_TOOL" "$score"
   repo_agg_test_tool "$TEST_TOOL" "$score"
   repo_agg_artifact_type "$ARTIFACT_TYPE" "$score"
+  repo_agg_runtime_version "$RUNTIME_VERSION" "$score"
 
   local n
   for n in "${NOTES[@]}"; do
@@ -348,6 +370,13 @@ detect_go() {
 
   local score=70
   add_note "Go: go.mod present"
+  local runtime_version="unknown"
+  local gover
+  gover="$(grep -m1 -E '^go [0-9]+(\\.[0-9]+)?' "$gomod" | awk '{print $2}' || true)"
+  if [[ -n "${gover:-}" ]]; then
+    runtime_version="go-$gover"
+    add_note "Go: version $gover from go.mod"
+  fi
 
   if find "$module_dir" -maxdepth 4 -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f -name 'main.go' -print -quit >/dev/null 2>&1; then
     score=$((score+10))
@@ -359,7 +388,11 @@ detect_go() {
     add_note "Go: *_test.go present"
   fi
 
+  local prev_score="$BEST_SCORE"
   consider_candidate "go" "none" "go" "go test" "binary" "$score" "Go module"
+  if (( BEST_SCORE > prev_score )); then
+    RUNTIME_VERSION="$runtime_version"
+  fi
 }
 
 # Ruby / Rails (усиленный вес Rails)
@@ -426,6 +459,23 @@ detect_node() {
 
   local content
   content="$(tr -d $'\n\r\t ' < "$pkg" | tr '[:upper:]' '[:lower:]')"
+  local runtime_version="unknown"
+  if [[ -f "$pkg_dir/.nvmrc" ]]; then
+    local nvm_node
+    nvm_node="$(head -n1 "$pkg_dir/.nvmrc" | tr -d '[:space:]')"
+    if [[ -n "${nvm_node:-}" ]]; then
+      runtime_version="node-$nvm_node"
+      add_note "Node: version $nvm_node from .nvmrc"
+    fi
+  fi
+  if [[ "$runtime_version" == "unknown" ]]; then
+    local nodever
+    nodever="$(grep -o '"node":"[^"]*"' <<<"$content" | head -n1 | cut -d'"' -f4 || true)"
+    if [[ -n "${nodever:-}" ]]; then
+      runtime_version="node-$nodever"
+      add_note "Node: engines.node=$nodever"
+    fi
+  fi
 
   local framework="node-generic"
 
@@ -471,7 +521,11 @@ detect_node() {
     add_note "Node: framework=$framework"
   fi
 
+  local prev_score="$BEST_SCORE"
   consider_candidate "$language" "$framework" "$build_tool" "jest" "node-app" "$score" "Node.js/TypeScript module"
+  if (( BEST_SCORE > prev_score )); then
+    RUNTIME_VERSION="$runtime_version"
+  fi
 }
 
 # Python (c учётом ASGI/WSGI generic)
@@ -483,6 +537,7 @@ detect_python() {
   local build_tool="pip"
   local test_tool="pytest"
   local artifact_type="wheel"
+  local runtime_version="unknown"
 
   if [[ -f "$module_dir/pyproject.toml" ]]; then
     has_marker=1
@@ -532,6 +587,33 @@ detect_python() {
   if [[ -f "$module_dir/setup.py" ]]; then
     has_marker=1
     add_note "Python: setup.py present"
+  fi
+
+  if [[ -f "$module_dir/.python-version" ]]; then
+    local pyver_file
+    pyver_file="$(head -n1 "$module_dir/.python-version" | tr -d '[:space:]')"
+    if [[ -n "${pyver_file:-}" ]]; then
+      runtime_version="python-$pyver_file"
+      add_note "Python: version $pyver_file from .python-version"
+    fi
+  fi
+  if [[ "$runtime_version" == "unknown" && -f "$module_dir/pyproject.toml" ]]; then
+    local pyver_req
+    local py_line
+    py_line="$(grep -m1 -E 'requires-python[[:space:]]*=' "$module_dir/pyproject.toml" 2>/dev/null || true)"
+    if [[ -n "${py_line:-}" ]]; then
+      pyver_req="$(printf '%s\n' "$py_line" | cut -d'=' -f2- | tr -d ' \"')"
+    fi
+    if [[ -z "${pyver_req:-}" ]]; then
+      py_line="$(grep -m1 -E '^python[[:space:]]*=' "$module_dir/pyproject.toml" 2>/dev/null || true)"
+      if [[ -n "${py_line:-}" ]]; then
+        pyver_req="$(printf '%s\n' "$py_line" | cut -d'=' -f2- | tr -d ' \"')"
+      fi
+    fi
+    if [[ -n "${pyver_req:-}" ]]; then
+      runtime_version="python-$pyver_req"
+      add_note "Python: version $pyver_req from pyproject.toml"
+    fi
   fi
 
   (( has_marker == 1 )) || return 0
@@ -585,7 +667,11 @@ detect_python() {
     score=$((score+5))
   fi
 
+  local prev_score="$BEST_SCORE"
   consider_candidate "python" "$framework" "$build_tool" "$test_tool" "$artifact_type" "$score" "Python module"
+  if (( BEST_SCORE > prev_score )); then
+    RUNTIME_VERSION="$runtime_version"
+  fi
 }
 
 # Java / Kotlin
@@ -598,11 +684,20 @@ detect_java_kotlin() {
   local language="java"
   local test_tool="junit"
   local artifact_type="jar"
+  local runtime_version="unknown"
 
   if [[ -f "$module_dir/pom.xml" ]]; then
     has_marker=1
     build_tool="maven"
     add_note "Java: pom.xml present"
+    local jv
+    jv="$(sed -n 's/.*<java.version>\\([^<]*\\)<\\/java.version>.*/\\1/p' "$module_dir/pom.xml" | head -n1)"
+    [[ -z "${jv:-}" ]] && jv="$(sed -n 's/.*<maven.compiler.source>\\([^<]*\\)<\\/maven.compiler.source>.*/\\1/p' "$module_dir/pom.xml" | head -n1)"
+    [[ -z "${jv:-}" ]] && jv="$(sed -n 's/.*<maven.compiler.target>\\([^<]*\\)<\\/maven.compiler.target>.*/\\1/p' "$module_dir/pom.xml" | head -n1)"
+    if [[ -n "${jv:-}" ]]; then
+      runtime_version="java-$jv"
+      add_note "Java: version $jv from pom.xml"
+    fi
     if grep -qi 'spring-boot' "$module_dir/pom.xml" 2>/dev/null; then
       framework="spring-boot"
     fi
@@ -614,6 +709,20 @@ detect_java_kotlin() {
     add_note "Java: build.gradle present"
     local gf="$module_dir/build.gradle"
     [[ -f "$module_dir/build.gradle.kts" ]] && gf="$module_dir/build.gradle.kts"
+    if [[ "$runtime_version" == "unknown" ]]; then
+      local gv
+      gv="$(grep -m1 -E 'JavaVersion\\.VERSION_|sourceCompatibility|targetCompatibility' "$gf" 2>/dev/null || true)"
+      if [[ "$gv" =~ JavaVersion\.VERSION_([0-9]+) ]]; then
+        runtime_version="java-${BASH_REMATCH[1]}"
+        add_note "Java: version ${BASH_REMATCH[1]} from Gradle JavaVersion"
+      else
+        gv="$(grep -m1 -E 'sourceCompatibility|targetCompatibility' "$gf" 2>/dev/null | sed -E 's/.*[= ][[:space:]]*\"{0,1}([^\"[:space:]]*).*/\\1/' || true)"
+        if [[ -n "${gv:-}" ]]; then
+          runtime_version="java-$gv"
+          add_note "Java: version $gv from Gradle compatibility"
+        fi
+      fi
+    fi
     if grep -qi 'spring-boot' "$gf" 2>/dev/null; then
       framework="spring-boot"
     fi
@@ -663,7 +772,11 @@ detect_java_kotlin() {
     score=$((score+3))
   fi
 
+  local prev_score="$BEST_SCORE"
   consider_candidate "$language" "$framework" "$build_tool" "$test_tool" "$artifact_type" "$score" "Java/Kotlin module"
+  if (( BEST_SCORE > prev_score )); then
+    RUNTIME_VERSION="$runtime_version"
+  fi
 }
 
 #######################################
@@ -736,6 +849,7 @@ print_repo_json() {
   print_sorted_list_from_arrays "build_tools" REPO_BUILD_TOOLS REPO_BUILD_TOOL_SCORES
   print_sorted_list_from_arrays "test_tools" REPO_TEST_TOOLS REPO_TEST_TOOL_SCORES
   print_sorted_list_from_arrays "artifact_types" REPO_ARTIFACT_TYPES REPO_ARTIFACT_TYPE_SCORES
+  print_sorted_list_from_arrays "runtime_versions" REPO_RUNTIME_VERSIONS REPO_RUNTIME_VERSION_SCORES
 
   # notes – последним, без запятой
   printf '  "notes": ['
