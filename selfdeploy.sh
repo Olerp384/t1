@@ -202,6 +202,10 @@ BEST_SCORE=-1
 declare -a NOTES=()
 declare -a RUNTIME_CANDIDATES=()
 declare -a RUNTIME_CANDIDATE_SCORES=()
+declare -a BUILD_CMD_CANDIDATES=()
+declare -a BUILD_CMD_CANDIDATE_SCORES=()
+declare -a TEST_CMD_CANDIDATES=()
+declare -a TEST_CMD_CANDIDATE_SCORES=()
 
 reset_detection_state() {
   LANGUAGE="unknown"
@@ -214,6 +218,10 @@ reset_detection_state() {
   NOTES=()
   RUNTIME_CANDIDATES=()
   RUNTIME_CANDIDATE_SCORES=()
+  BUILD_CMD_CANDIDATES=()
+  BUILD_CMD_CANDIDATE_SCORES=()
+  TEST_CMD_CANDIDATES=()
+  TEST_CMD_CANDIDATE_SCORES=()
 }
 
 add_note() {
@@ -238,6 +246,36 @@ add_runtime_candidate() {
   done
   RUNTIME_CANDIDATES+=("$rv")
   RUNTIME_CANDIDATE_SCORES+=("$score")
+}
+
+add_build_cmd_candidate() {
+  local cmd="$1"
+  local score="$2"
+  [[ -z "$cmd" ]] && return 0
+  local i
+  for i in "${!BUILD_CMD_CANDIDATES[@]}"; do
+    if [[ "${BUILD_CMD_CANDIDATES[$i]}" == "$cmd" ]]; then
+      BUILD_CMD_CANDIDATE_SCORES[$i]=$(( BUILD_CMD_CANDIDATE_SCORES[$i] + score ))
+      return 0
+    fi
+  done
+  BUILD_CMD_CANDIDATES+=("$cmd")
+  BUILD_CMD_CANDIDATE_SCORES+=("$score")
+}
+
+add_test_cmd_candidate() {
+  local cmd="$1"
+  local score="$2"
+  [[ -z "$cmd" ]] && return 0
+  local i
+  for i in "${!TEST_CMD_CANDIDATES[@]}"; do
+    if [[ "${TEST_CMD_CANDIDATES[$i]}" == "$cmd" ]]; then
+      TEST_CMD_CANDIDATE_SCORES[$i]=$(( TEST_CMD_CANDIDATE_SCORES[$i] + score ))
+      return 0
+    fi
+  done
+  TEST_CMD_CANDIDATES+=("$cmd")
+  TEST_CMD_CANDIDATE_SCORES+=("$score")
 }
 
 consider_candidate() {
@@ -275,6 +313,10 @@ declare -a REPO_ARTIFACT_TYPES=()
 declare -a REPO_ARTIFACT_TYPE_SCORES=()
 declare -a REPO_RUNTIME_VERSIONS=()
 declare -a REPO_RUNTIME_VERSION_SCORES=()
+declare -a REPO_BUILD_CMDS=()
+declare -a REPO_BUILD_CMD_SCORES=()
+declare -a REPO_TEST_CMDS=()
+declare -a REPO_TEST_CMD_SCORES=()
 declare -a REPO_NOTES=()
 
 repo_reset() {
@@ -290,6 +332,10 @@ repo_reset() {
   REPO_ARTIFACT_TYPE_SCORES=()
   REPO_RUNTIME_VERSIONS=()
   REPO_RUNTIME_VERSION_SCORES=()
+  REPO_BUILD_CMDS=()
+  REPO_BUILD_CMD_SCORES=()
+  REPO_TEST_CMDS=()
+  REPO_TEST_CMD_SCORES=()
   REPO_NOTES=()
 }
 
@@ -383,6 +429,36 @@ repo_agg_runtime_version() {
   REPO_RUNTIME_VERSION_SCORES+=("$score")
 }
 
+repo_agg_build_cmd() {
+  local cmd="$1"
+  local score="$2"
+  [[ -z "$cmd" ]] && return 0
+  local i
+  for i in "${!REPO_BUILD_CMDS[@]}"; do
+    if [[ "${REPO_BUILD_CMDS[$i]}" == "$cmd" ]]; then
+      REPO_BUILD_CMD_SCORES[$i]=$(( REPO_BUILD_CMD_SCORES[$i] + score ))
+      return 0
+    fi
+  done
+  REPO_BUILD_CMDS+=("$cmd")
+  REPO_BUILD_CMD_SCORES+=("$score")
+}
+
+repo_agg_test_cmd() {
+  local cmd="$1"
+  local score="$2"
+  [[ -z "$cmd" ]] && return 0
+  local i
+  for i in "${!REPO_TEST_CMDS[@]}"; do
+    if [[ "${REPO_TEST_CMDS[$i]}" == "$cmd" ]]; then
+      REPO_TEST_CMD_SCORES[$i]=$(( REPO_TEST_CMD_SCORES[$i] + score ))
+      return 0
+    fi
+  done
+  REPO_TEST_CMDS+=("$cmd")
+  REPO_TEST_CMD_SCORES+=("$score")
+}
+
 repo_add_note() {
   local note="$1"
   local n
@@ -410,6 +486,13 @@ aggregate_current_module_into_repo() {
   local i
   for i in "${!RUNTIME_CANDIDATES[@]}"; do
     repo_agg_runtime_version "${RUNTIME_CANDIDATES[$i]}" "${RUNTIME_CANDIDATE_SCORES[$i]}"
+  done
+
+  for i in "${!BUILD_CMD_CANDIDATES[@]}"; do
+    repo_agg_build_cmd "${BUILD_CMD_CANDIDATES[$i]}" "${BUILD_CMD_CANDIDATE_SCORES[$i]}"
+  done
+  for i in "${!TEST_CMD_CANDIDATES[@]}"; do
+    repo_agg_test_cmd "${TEST_CMD_CANDIDATES[$i]}" "${TEST_CMD_CANDIDATE_SCORES[$i]}"
   done
 }
 
@@ -444,6 +527,8 @@ detect_go() {
     add_note "Go: *_test.go present"
   fi
 
+  add_build_cmd_candidate "go build ./..." "$score"
+  add_test_cmd_candidate "go test ./..." "$score"
   add_runtime_candidate "$runtime_version" "$score"
 
   local prev_score="$BEST_SCORE"
@@ -578,6 +663,18 @@ detect_node() {
     score=$((score+10))
     add_note "Node: framework=$framework"
   fi
+
+  # Build/test commands from package.json scripts
+  local build_cmd=""
+  local test_cmd=""
+  if grep -q '\"build\":\"' <<<"$content"; then
+    build_cmd="$build_tool run build"
+  fi
+  if grep -q '\"test\":\"' <<<"$content"; then
+    test_cmd="$build_tool test"
+  fi
+  add_build_cmd_candidate "$build_cmd" "$score"
+  add_test_cmd_candidate "$test_cmd" "$score"
 
   add_runtime_candidate "$runtime_version" "$score"
 
@@ -727,6 +824,17 @@ detect_python() {
     score=$((score+5))
   fi
 
+  # Build/test commands
+  local build_cmd=""
+  local test_cmd="pytest"
+  if [[ "$build_tool" == "poetry" ]]; then
+    build_cmd="poetry build"
+    test_cmd="poetry run pytest"
+  elif [[ -f "$module_dir/setup.py" || -f "$module_dir/pyproject.toml" ]]; then
+    build_cmd="python -m build"
+  fi
+  add_build_cmd_candidate "$build_cmd" "$score"
+  add_test_cmd_candidate "$test_cmd" "$score"
   add_runtime_candidate "$runtime_version" "$score"
 
   local prev_score="$BEST_SCORE"
@@ -763,6 +871,8 @@ detect_java_kotlin() {
     if grep -qi 'spring-boot' "$module_dir/pom.xml" 2>/dev/null; then
       framework="spring-boot"
     fi
+    add_build_cmd_candidate "mvn -B package" "$score"
+    add_test_cmd_candidate "mvn -B test" "$score"
   fi
 
   if [[ -f "$module_dir/build.gradle" || -f "$module_dir/build.gradle.kts" ]]; then
@@ -794,6 +904,10 @@ detect_java_kotlin() {
       language="kotlin"
       add_note "Kotlin: kotlin in Gradle file"
     fi
+    local gradle_cmd="./gradlew"
+    [[ ! -x "$module_dir/gradlew" ]] && gradle_cmd="gradle"
+    add_build_cmd_candidate "$gradle_cmd build" "$score"
+    add_test_cmd_candidate "$gradle_cmd test" "$score"
   fi
 
   if [[ -f "$module_dir/build.xml" ]]; then
@@ -809,6 +923,8 @@ detect_java_kotlin() {
       fi
     fi
     add_runtime_candidate "$runtime_version" "$score"
+    add_build_cmd_candidate "ant" "$score"
+    add_test_cmd_candidate "ant test" "$score"
   fi
 
   (( has_marker == 1 )) || return 0
@@ -911,10 +1027,14 @@ print_sorted_list_from_arrays() {
 print_repo_json() {
   local root="$1"
   local dockerflag="$2"
+  local dockerfiles_json="$3"
+  local compose_json="$4"
 
   printf '{\n'
   printf '  "root_path": "%s",\n' "$(json_escape "$root")"
   printf '  "has_dockerfile": %s,\n' "$dockerflag"
+  printf '  "dockerfiles": %s,\n' "$dockerfiles_json"
+  printf '  "docker_compose_files": %s,\n' "$compose_json"
 
   print_sorted_list_from_arrays "languages" REPO_LANGS REPO_LANG_SCORES
   print_sorted_list_from_arrays "frameworks" REPO_FRAMEWORKS REPO_FRAMEWORK_SCORES
@@ -922,6 +1042,8 @@ print_repo_json() {
   print_sorted_list_from_arrays "test_tools" REPO_TEST_TOOLS REPO_TEST_TOOL_SCORES
   print_sorted_list_from_arrays "artifact_types" REPO_ARTIFACT_TYPES REPO_ARTIFACT_TYPE_SCORES
   print_sorted_list_from_arrays "runtime_versions" REPO_RUNTIME_VERSIONS REPO_RUNTIME_VERSION_SCORES
+  print_sorted_list_from_arrays "build_commands" REPO_BUILD_CMDS REPO_BUILD_CMD_SCORES
+  print_sorted_list_from_arrays "test_commands" REPO_TEST_CMDS REPO_TEST_CMD_SCORES
 
   # notes – последним, без запятой
   printf '  "notes": ['
@@ -942,6 +1064,8 @@ print_repo_json() {
 run_analyze() {
   local root=""
   local tmp_dir=""
+  local dockerfiles_json="[]"
+  local compose_json="[]"
 
   if [[ -n "$REPO_URL" ]]; then
     tmp_dir="$(mktemp -d "/tmp/selfdeploy_repo.XXXXXX")"
@@ -973,8 +1097,12 @@ run_analyze() {
   if has_dockerfile "$root"; then
     dockerflag="true"
   fi
+  dockerfiles_json="$(find "$root" -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f -iname 'dockerfile' -print 2>/dev/null | awk '{printf "\"%s\",", $0}' | sed 's/,$//' | sed 's/^/[/' | sed 's/$/]/')"
+  compose_json="$(find "$root" -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f \( -iname 'docker-compose.yml' -o -iname 'docker-compose.yaml' -o -iname 'compose.yml' -o -iname 'compose.yaml' \) -print 2>/dev/null | awk '{printf "\"%s\",", $0}' | sed 's/,$//' | sed 's/^/[/' | sed 's/$/]/')"
+  [[ -z "$dockerfiles_json" ]] && dockerfiles_json="[]"
+  [[ -z "$compose_json" ]] && compose_json="[]"
 
-  print_repo_json "$root" "$dockerflag"
+  print_repo_json "$root" "$dockerflag" "$dockerfiles_json" "$compose_json"
 }
 
 #######################################
