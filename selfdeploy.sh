@@ -100,14 +100,14 @@ json_escape() {
 extract_xml_tag_value() {
   local file="$1"
   local tag="$2"
-  awk -v t="$tag" '
-    match($0, "<" t ">[ \t]*([^<]+)<", a) { print a[1]; exit }
+  awk -v t="$tag" 'BEGIN{IGNORECASE=1}
+    match($0, "<[^>]*" t "[^>]*>[ \t]*([^<]+)<", a) { print a[1]; exit }
   ' "$file" 2>/dev/null || true
 }
 
 extract_gradle_compat_version() {
   local file="$1"
-  awk '
+  awk 'BEGIN{IGNORECASE=1}
     match($0, /sourceCompatibility[ ="]+([^" \t]+)/, a) { print a[1]; exit }
     match($0, /targetCompatibility[ ="]+([^" \t]+)/, a) { print a[1]; exit }
   ' "$file" 2>/dev/null || true
@@ -115,7 +115,7 @@ extract_gradle_compat_version() {
 
 extract_gradle_toolchain_version() {
   local file="$1"
-  awk '
+  awk 'BEGIN{IGNORECASE=1}
     match($0, /JavaLanguageVersion\.of\(([^\)]+)\)/, a) { print a[1]; exit }
     match($0, /languageVersion[ \t]*=[ \t]*JavaLanguageVersion\.of\(([^\)]+)\)/, a) { print a[1]; exit }
     match($0, /languageVersion\.set\(JavaLanguageVersion\.of\(([^\)]+)\)\)/, a) { print a[1]; exit }
@@ -125,25 +125,36 @@ extract_gradle_toolchain_version() {
 extract_maven_java_version() {
   local file="$1"
   local v=""
-  local tag
-  for tag in maven.compiler.release java.version maven.compiler.source maven.compiler.target java.level target.jdk source.jdk target.java.version; do
-    v="$(extract_xml_tag_value "$file" "$tag" | tr -d ' \t\r\n')"
-    if [[ "$v" =~ ^\$\{([^}]+)\}$ ]]; then
-      local ref="${BASH_REMATCH[1]}"
-      v="$(extract_xml_tag_value "$file" "$ref" | tr -d ' \t\r\n')"
-    fi
-    [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]] && { echo "$v"; return; }
-  done
-  v="$(awk '
-    match($0, /<[^>]*java[^>]*>[ \t]*([0-9]+(\.[0-9]+)?)[ \t]*</, a) { print a[1]; exit }
-    match($0, /<[^>]*target[^>]*>[ \t]*([0-9]+(\.[0-9]+)?)[ \t]*</, a) { print a[1]; exit }
+  local tag ref
+
+  # primary tags (release/source/target/java.version), namespace-insensitive
+  v="$(awk 'BEGIN{IGNORECASE=1}
+    match($0, /<[^>]*release[^>]*>[ \t]*([^<[:space:]]+)/, a) { print a[1]; exit }
+    match($0, /<[^>]*source[^>]*>[ \t]*([^<[:space:]]+)/, a) { print a[1]; exit }
+    match($0, /<[^>]*target[^>]*>[ \t]*([^<[:space:]]+)/, a) { print a[1]; exit }
+    match($0, /<[^>]*java\.version[^>]*>[ \t]*([^<[:space:]]+)/, a) { print a[1]; exit }
   ' "$file" 2>/dev/null || true)"
-  [[ -n "${v:-}" ]] && echo "$v"
+
+  if [[ "$v" =~ ^\$\{([^}]+)\}$ ]]; then
+    ref="${BASH_REMATCH[1]}"
+    v="$(awk -v p="$ref" 'BEGIN{IGNORECASE=1}
+      match($0, "<[^>]*" p "[^>]*>[ \t]*([^<[:space:]]+)", a) { print a[1]; exit }
+    ' "$file" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$v" || "$v" =~ ^\$\{ ]]; then
+    v="$(awk 'BEGIN{IGNORECASE=1}
+      match($0, /<[^>]*java[^>]*>[ \t]*([0-9]+(\.[0-9]+)?)/, a) { print a[1]; exit }
+      match($0, /<[^>]*target[^>]*>[ \t]*([0-9]+(\.[0-9]+)?)/, a) { print a[1]; exit }
+    ' "$file" 2>/dev/null || true)"
+  fi
+
+  [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]] && echo "$v"
 }
 
 extract_ant_java_version() {
   local file="$1"
-  awk '
+  awk 'BEGIN{IGNORECASE=1}
     match($0, /property[^>]*name="[^"]*(java|target)[^"]*"[^>]*value="([0-9]+(\.[0-9]+)?)"/, a) { print a[2]; exit }
   ' "$file" 2>/dev/null || true
 }
