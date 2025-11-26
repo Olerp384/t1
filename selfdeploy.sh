@@ -747,6 +747,7 @@ detect_java_kotlin() {
   local test_tool="junit"
   local artifact_type="jar"
   local runtime_version="unknown"
+  local score=60
 
   if [[ -f "$module_dir/pom.xml" ]]; then
     has_marker=1
@@ -832,7 +833,6 @@ detect_java_kotlin() {
     fi
   fi
 
-  local score=60
   if [[ "$framework" == "spring-boot" ]]; then
     score=$((score+20))
     add_note "Java/Kotlin: framework=spring-boot"
