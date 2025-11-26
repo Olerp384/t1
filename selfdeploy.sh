@@ -87,6 +87,7 @@ parse_args() {
 
   if [[ "$COMMAND" == "build" ]]; then
     DO_BUILD=1
+    KEEP_CLONE=1
   fi
 }
 
