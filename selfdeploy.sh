@@ -1027,6 +1027,7 @@ detect_java_kotlin() {
       if [[ -n "${gpv:-}" && $(is_numeric_version "$gpv") ]]; then
         runtime_version="java-$gpv"
         add_note "Java: version $gpv from gradle.properties"
+        add_runtime_candidate "$runtime_version" "$score"
       fi
       if [[ "$runtime_version" == "unknown" ]]; then
         local gfilev
@@ -1034,6 +1035,7 @@ detect_java_kotlin() {
         if [[ -n "${gfilev:-}" && $(is_numeric_version "$gfilev") ]]; then
           runtime_version="java-$gfilev"
           add_note "Java: version $gfilev from Gradle files"
+          add_runtime_candidate "$runtime_version" "$score"
         fi
       fi
       if [[ "$runtime_version" == "unknown" ]]; then
@@ -1042,6 +1044,7 @@ detect_java_kotlin() {
         if [[ -n "${ggrepv:-}" && $(is_numeric_version "$ggrepv") ]]; then
           runtime_version="java-$ggrepv"
           add_note "Java: version $ggrepv from repo search"
+          add_runtime_candidate "$runtime_version" "$score"
         fi
       fi
     fi
