@@ -100,17 +100,26 @@ json_escape() {
 extract_xml_tag_value() {
   local file="$1"
   local tag="$2"
-  perl -ne "if (/<${tag}>\\s*([^<]+)/) { print \$1; exit }" "$file" 2>/dev/null || true
+  awk -v t="$tag" '
+    match($0, "<" t ">[ \t]*([^<]+)<", a) { print a[1]; exit }
+  ' "$file" 2>/dev/null || true
 }
 
 extract_gradle_compat_version() {
   local file="$1"
-  perl -ne 'if (/sourceCompatibility\s*[= ]\s*"?([^"\s]+)/) { print $1; exit } if (/targetCompatibility\s*[= ]\s*"?([^"\s]+)/) { print $1; exit }' "$file" 2>/dev/null || true
+  awk '
+    match($0, /sourceCompatibility[ ="]+([^" \t]+)/, a) { print a[1]; exit }
+    match($0, /targetCompatibility[ ="]+([^" \t]+)/, a) { print a[1]; exit }
+  ' "$file" 2>/dev/null || true
 }
 
 extract_gradle_toolchain_version() {
   local file="$1"
-  perl -ne 'if (/JavaLanguageVersion\.of\(([^)]+)\)/) { print $1; exit } if (/languageVersion\s*=\s*JavaLanguageVersion\.of\(([^)]+)\)/) { print $1; exit } if (/languageVersion\.set\(JavaLanguageVersion\.of\(([^)]+)\)\)/) { print $1; exit }' "$file" 2>/dev/null || true
+  awk '
+    match($0, /JavaLanguageVersion\.of\(([^\)]+)\)/, a) { print a[1]; exit }
+    match($0, /languageVersion[ \t]*=[ \t]*JavaLanguageVersion\.of\(([^\)]+)\)/, a) { print a[1]; exit }
+    match($0, /languageVersion\.set\(JavaLanguageVersion\.of\(([^\)]+)\)\)/, a) { print a[1]; exit }
+  ' "$file" 2>/dev/null || true
 }
 
 extract_maven_java_version() {
@@ -119,15 +128,24 @@ extract_maven_java_version() {
   local tag
   for tag in maven.compiler.release java.version maven.compiler.source maven.compiler.target java.level target.jdk source.jdk target.java.version; do
     v="$(extract_xml_tag_value "$file" "$tag" | tr -d ' \t\r\n')"
+    if [[ "$v" =~ ^\$\{([^}]+)\}$ ]]; then
+      local ref="${BASH_REMATCH[1]}"
+      v="$(extract_xml_tag_value "$file" "$ref" | tr -d ' \t\r\n')"
+    fi
     [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]] && { echo "$v"; return; }
   done
-  v="$(perl -ne 'if (/<[^>]*java[^>]*>\s*([0-9]+(?:\.[0-9]+)?)\s*<\\/[^>]*>/) { print $1; exit } elsif (/<[^>]*target[^>]*>\s*([0-9]+(?:\.[0-9]+)?)\s*<\\/[^>]*>/) { print $1; exit }' "$file" 2>/dev/null || true)"
+  v="$(awk '
+    match($0, /<[^>]*java[^>]*>[ \t]*([0-9]+(\.[0-9]+)?)[ \t]*</, a) { print a[1]; exit }
+    match($0, /<[^>]*target[^>]*>[ \t]*([0-9]+(\.[0-9]+)?)[ \t]*</, a) { print a[1]; exit }
+  ' "$file" 2>/dev/null || true)"
   [[ -n "${v:-}" ]] && echo "$v"
 }
 
 extract_ant_java_version() {
   local file="$1"
-  perl -ne 'if (/property[^>]*name="[^"]*(java|target)[^"]*"[^>]*value="([0-9]+(?:\.[0-9]+)?)"/) { print $2; exit }' "$file" 2>/dev/null || true
+  awk '
+    match($0, /property[^>]*name="[^"]*(java|target)[^"]*"[^>]*value="([0-9]+(\.[0-9]+)?)"/, a) { print a[2]; exit }
+  ' "$file" 2>/dev/null || true
 }
 
 #######################################
