@@ -172,6 +172,17 @@ extract_gradle_java_version_upwards() {
   done
 }
 
+extract_java_version_grep_repo() {
+  local dir="$1"
+  local v=""
+  # JavaVersion.VERSION_XX patterns
+  v="$(find "$dir" -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f \( -name 'build.gradle' -o -name 'build.gradle.kts' -o -name 'settings.gradle' -o -name 'settings.gradle.kts' -o -name 'gradle.properties' -o -name 'pom.xml' \) -print 2>/dev/null | xargs -I{} sh -c "grep -m1 -o -E 'JavaVersion\\.VERSION_[0-9]+' '{}' || true" | head -n1 | sed -E 's/.*VERSION_([0-9]+).*/\\1/')" || true
+  [[ -n "${v:-}" ]] && { echo "$v"; return; }
+  # key/value style javaVersion=17 or java.version=17
+  v="$(find "$dir" -type d \( $IGNORED_DIRS_EXPR \) -prune -o -type f \( -name 'gradle.properties' -o -name 'build.gradle' -o -name 'build.gradle.kts' -o -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print 2>/dev/null | xargs -I{} sh -c "grep -m1 -E 'java(Version|\\.version|_version|RuntimeVersion|minRuntimeVersion)[^0-9]*[ =:]?[ \t]*[0-9]{1,2}' '{}' || true" | head -n1 | sed -E 's/.*([0-9]{1,2}).*/\\1/')" || true
+  [[ -n "${v:-}" ]] && echo "$v"
+}
+
 extract_maven_java_version_in_file() {
   local file="$1"
   local v=""
@@ -1018,6 +1029,14 @@ detect_java_kotlin() {
         if [[ -n "${gfilev:-}" ]]; then
           runtime_version="java-$gfilev"
           add_note "Java: version $gfilev from Gradle files"
+        fi
+      fi
+      if [[ "$runtime_version" == "unknown" ]]; then
+        local ggrepv
+        ggrepv="$(extract_java_version_grep_repo "$module_dir")"
+        if [[ -n "${ggrepv:-}" ]]; then
+          runtime_version="java-$ggrepv"
+          add_note "Java: version $ggrepv from repo search"
         fi
       fi
     fi
