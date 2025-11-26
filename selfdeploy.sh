@@ -113,6 +113,23 @@ extract_gradle_toolchain_version() {
   perl -ne 'if (/JavaLanguageVersion\.of\(([^)]+)\)/) { print $1; exit } if (/languageVersion\s*=\s*JavaLanguageVersion\.of\(([^)]+)\)/) { print $1; exit } if (/languageVersion\.set\(JavaLanguageVersion\.of\(([^)]+)\)\)/) { print $1; exit }' "$file" 2>/dev/null || true
 }
 
+extract_maven_java_version() {
+  local file="$1"
+  local v=""
+  local tag
+  for tag in maven.compiler.release java.version maven.compiler.source maven.compiler.target java.level target.jdk source.jdk target.java.version; do
+    v="$(extract_xml_tag_value "$file" "$tag" | tr -d ' \t\r\n')"
+    [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]] && { echo "$v"; return; }
+  done
+  v="$(perl -ne 'if (/<[^>]*java[^>]*>\s*([0-9]+(?:\.[0-9]+)?)\s*<\\/[^>]*>/) { print $1; exit } elsif (/<[^>]*target[^>]*>\s*([0-9]+(?:\.[0-9]+)?)\s*<\\/[^>]*>/) { print $1; exit }' "$file" 2>/dev/null || true)"
+  [[ -n "${v:-}" ]] && echo "$v"
+}
+
+extract_ant_java_version() {
+  local file="$1"
+  perl -ne 'if (/property[^>]*name="[^"]*(java|target)[^"]*"[^>]*value="([0-9]+(?:\.[0-9]+)?)"/) { print $2; exit }' "$file" 2>/dev/null || true
+}
+
 #######################################
 # Dockerfile
 #######################################
@@ -183,6 +200,8 @@ RUNTIME_VERSION="unknown"
 BEST_SCORE=-1
 
 declare -a NOTES=()
+declare -a RUNTIME_CANDIDATES=()
+declare -a RUNTIME_CANDIDATE_SCORES=()
 
 reset_detection_state() {
   LANGUAGE="unknown"
@@ -193,6 +212,8 @@ reset_detection_state() {
   RUNTIME_VERSION="unknown"
   BEST_SCORE=-1
   NOTES=()
+  RUNTIME_CANDIDATES=()
+  RUNTIME_CANDIDATE_SCORES=()
 }
 
 add_note() {
@@ -202,6 +223,21 @@ add_note() {
     [[ "$n" == "$note" ]] && return 0
   done
   NOTES+=("$note")
+}
+
+add_runtime_candidate() {
+  local rv="$1"
+  local score="$2"
+  [[ "$rv" == "unknown" || -z "$rv" ]] && return 0
+  local i
+  for i in "${!RUNTIME_CANDIDATES[@]}"; do
+    if [[ "${RUNTIME_CANDIDATES[$i]}" == "$rv" ]]; then
+      RUNTIME_CANDIDATE_SCORES[$i]=$(( RUNTIME_CANDIDATE_SCORES[$i] + score ))
+      return 0
+    fi
+  done
+  RUNTIME_CANDIDATES+=("$rv")
+  RUNTIME_CANDIDATE_SCORES+=("$score")
 }
 
 consider_candidate() {
@@ -365,11 +401,15 @@ aggregate_current_module_into_repo() {
   repo_agg_build_tool "$BUILD_TOOL" "$score"
   repo_agg_test_tool "$TEST_TOOL" "$score"
   repo_agg_artifact_type "$ARTIFACT_TYPE" "$score"
-  repo_agg_runtime_version "$RUNTIME_VERSION" "$score"
 
   local n
   for n in "${NOTES[@]}"; do
     repo_add_note "$n"
+  done
+
+  local i
+  for i in "${!RUNTIME_CANDIDATES[@]}"; do
+    repo_agg_runtime_version "${RUNTIME_CANDIDATES[$i]}" "${RUNTIME_CANDIDATE_SCORES[$i]}"
   done
 }
 
@@ -403,6 +443,8 @@ detect_go() {
     score=$((score+5))
     add_note "Go: *_test.go present"
   fi
+
+  add_runtime_candidate "$runtime_version" "$score"
 
   local prev_score="$BEST_SCORE"
   consider_candidate "go" "none" "go" "go test" "binary" "$score" "Go module"
@@ -536,6 +578,8 @@ detect_node() {
     score=$((score+10))
     add_note "Node: framework=$framework"
   fi
+
+  add_runtime_candidate "$runtime_version" "$score"
 
   local prev_score="$BEST_SCORE"
   consider_candidate "$language" "$framework" "$build_tool" "jest" "node-app" "$score" "Node.js/TypeScript module"
@@ -683,6 +727,8 @@ detect_python() {
     score=$((score+5))
   fi
 
+  add_runtime_candidate "$runtime_version" "$score"
+
   local prev_score="$BEST_SCORE"
   consider_candidate "python" "$framework" "$build_tool" "$test_tool" "$artifact_type" "$score" "Python module"
   if (( BEST_SCORE > prev_score )); then
@@ -707,13 +753,11 @@ detect_java_kotlin() {
     build_tool="maven"
     add_note "Java: pom.xml present"
     local jv
-    jv="$(extract_xml_tag_value "$module_dir/pom.xml" "maven.compiler.release")"
-    [[ -z "${jv:-}" ]] && jv="$(extract_xml_tag_value "$module_dir/pom.xml" "java.version")"
-    [[ -z "${jv:-}" ]] && jv="$(extract_xml_tag_value "$module_dir/pom.xml" "maven.compiler.source")"
-    [[ -z "${jv:-}" ]] && jv="$(extract_xml_tag_value "$module_dir/pom.xml" "maven.compiler.target")"
+    jv="$(extract_maven_java_version "$module_dir/pom.xml")"
     if [[ -n "${jv:-}" ]]; then
       runtime_version="java-$jv"
       add_note "Java: version $jv from pom.xml"
+      add_runtime_candidate "$runtime_version" "$score"
     fi
     if grep -qi 'spring-boot' "$module_dir/pom.xml" 2>/dev/null; then
       framework="spring-boot"
@@ -740,6 +784,7 @@ detect_java_kotlin() {
           add_note "Java: version $gv from Gradle toolchain/compatibility"
         fi
       fi
+      add_runtime_candidate "$runtime_version" "$score"
     fi
     if grep -qi 'spring-boot' "$gf" 2>/dev/null; then
       framework="spring-boot"
@@ -754,6 +799,15 @@ detect_java_kotlin() {
     has_marker=1
     [[ "$build_tool" == "unknown" ]] && build_tool="ant"
     add_note "Java: build.xml present"
+    if [[ "$runtime_version" == "unknown" ]]; then
+      local av
+      av="$(extract_ant_java_version "$module_dir/build.xml")"
+      if [[ -n "${av:-}" ]]; then
+        runtime_version="java-$av"
+        add_note "Java: version $av from build.xml"
+      fi
+    fi
+    add_runtime_candidate "$runtime_version" "$score"
   fi
 
   (( has_marker == 1 )) || return 0
