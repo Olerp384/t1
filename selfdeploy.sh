@@ -1028,37 +1028,28 @@ detect_java_kotlin() {
       language="kotlin"
       add_note "Kotlin: kotlin in Gradle file"
     fi
-    if [[ "$runtime_version" == "unknown" ]]; then
-      local gpv
-      gpv="$(extract_gradle_properties_java_version "$module_dir")"
-      if [[ -n "${gpv:-}" && $(is_numeric_version "$gpv") ]]; then
-        runtime_version="java-$gpv"
-        add_note "Java: version $gpv from gradle.properties"
-        add_runtime_candidate "$runtime_version" "$score"
-      fi
-      if [[ "$runtime_version" == "unknown" ]]; then
-        local gfilev
-        gfilev="$(extract_gradle_java_version_upwards "$module_dir")"
-        if [[ -n "${gfilev:-}" && $(is_numeric_version "$gfilev") ]]; then
-          runtime_version="java-$gfilev"
-          add_note "Java: version $gfilev from Gradle files"
-          add_runtime_candidate "$runtime_version" "$score"
-        fi
-      fi
-      if [[ "$runtime_version" == "unknown" ]]; then
-        local ggrepv
-        ggrepv="$(extract_java_version_grep_repo "$module_dir")"
-        if [[ -n "${ggrepv:-}" && $(is_numeric_version "$ggrepv") ]]; then
-          runtime_version="java-$ggrepv"
-          add_note "Java: version $ggrepv from repo search"
-          add_runtime_candidate "$runtime_version" "$score"
-        fi
-      fi
+  if [[ "$runtime_version" == "unknown" ]]; then
+    local gpv
+    gpv="$(extract_gradle_properties_java_version "$module_dir")"
+    if [[ -n "${gpv:-}" && $(is_numeric_version "$gpv") ]]; then
+      runtime_version="java-$gpv"
+      add_note "Java: version $gpv from gradle.properties"
+      add_runtime_candidate "$runtime_version" "$score"
     fi
     if [[ "$runtime_version" == "unknown" ]]; then
-      local assumed_java="17"
-      runtime_version="java-$assumed_java"
-      add_note "Java: version $assumed_java assumed (not found explicitly)"
+      local gfilev
+      gfilev="$(extract_gradle_java_version_upwards "$module_dir")"
+      if [[ -n "${gfilev:-}" && $(is_numeric_version "$gfilev") ]]; then
+        runtime_version="java-$gfilev"
+        add_note "Java: version $gfilev from Gradle files"
+        add_runtime_candidate "$runtime_version" "$score"
+      fi
+    fi
+  fi
+  if [[ "$runtime_version" == "unknown" ]]; then
+    local assumed_java="17"
+    runtime_version="java-$assumed_java"
+    add_note "Java: version $assumed_java assumed (not found explicitly)"
       add_runtime_candidate "$runtime_version" "$score"
     fi
     local gradle_cmd="./gradlew"
