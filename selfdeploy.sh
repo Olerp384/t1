@@ -122,6 +122,28 @@ extract_gradle_toolchain_version() {
   ' "$file" 2>/dev/null || true
 }
 
+extract_gradle_properties_java_version_in_file() {
+  local file="$1"
+  awk 'BEGIN{IGNORECASE=1}
+    match($0, /^[ \t]*(javaVersion|minRuntimeVersion|minimumRuntimeVersion|runtimeJavaVersion)[ \t]*=[ \t]*([0-9]+(\.[0-9]+)?)/, a) { print a[2]; exit }
+  ' "$file" 2>/dev/null || true
+}
+
+extract_gradle_properties_java_version() {
+  local dir="$1"
+  local max_up=4
+  local attempts=0
+  while [[ $attempts -lt $max_up && -n "$dir" && "$dir" != "/" ]]; do
+    attempts=$((attempts+1))
+    if [[ -f "$dir/gradle.properties" ]]; then
+      local v
+      v="$(extract_gradle_properties_java_version_in_file "$dir/gradle.properties")"
+      [[ -n "${v:-}" ]] && { echo "$v"; return; }
+    fi
+    dir="$(cd "$dir/.." 2>/dev/null && pwd)"
+  done
+}
+
 extract_maven_java_version_in_file() {
   local file="$1"
   local v=""
@@ -954,6 +976,14 @@ detect_java_kotlin() {
     if grep -qi 'kotlin' "$gf" 2>/dev/null; then
       language="kotlin"
       add_note "Kotlin: kotlin in Gradle file"
+    fi
+    if [[ "$runtime_version" == "unknown" ]]; then
+      local gpv
+      gpv="$(extract_gradle_properties_java_version "$module_dir")"
+      if [[ -n "${gpv:-}" ]]; then
+        runtime_version="java-$gpv"
+        add_note "Java: version $gpv from gradle.properties"
+      fi
     fi
     local gradle_cmd="./gradlew"
     [[ ! -x "$module_dir/gradlew" ]] && gradle_cmd="gradle"
