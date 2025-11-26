@@ -122,7 +122,7 @@ extract_gradle_toolchain_version() {
   ' "$file" 2>/dev/null || true
 }
 
-extract_maven_java_version() {
+extract_maven_java_version_in_file() {
   local file="$1"
   local v=""
   local tag ref
@@ -150,6 +150,28 @@ extract_maven_java_version() {
   fi
 
   [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]] && echo "$v"
+}
+
+extract_maven_java_version() {
+  local file="$1"
+  local attempts=0
+  local max_up=5
+  local dir
+  dir="$(dirname "$file")"
+  while [[ $attempts -lt $max_up ]]; do
+    attempts=$((attempts+1))
+    local val
+    val="$(extract_maven_java_version_in_file "$file")"
+    [[ -n "$val" ]] && { echo "$val"; return; }
+    dir="$(cd "$dir/.." 2>/dev/null && pwd)"
+    [[ -z "$dir" || "$dir" == "/" ]] && break
+    if [[ -f "$dir/pom.xml" ]]; then
+      file="$dir/pom.xml"
+      continue
+    else
+      break
+    fi
+  done
 }
 
 extract_ant_java_version() {
