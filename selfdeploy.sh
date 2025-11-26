@@ -1088,9 +1088,6 @@ detect_java_kotlin() {
       fi
     fi
   fi
-  if [[ "$runtime_version" == "unknown" ]]; then
-    # No explicit Java version found; skip adding a guessed runtime to avoid false positives.
-  fi
 
   if [[ -f "$module_dir/build.xml" ]]; then
     has_marker=1
