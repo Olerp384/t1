@@ -975,7 +975,7 @@ detect_java_kotlin() {
     add_note "Java: pom.xml present"
     local jv
     jv="$(extract_maven_java_version "$module_dir/pom.xml")"
-    if [[ -n "${jv:-}" ]]; then
+    if [[ -n "${jv:-}" && $(is_numeric_version "$jv") ]]; then
       runtime_version="java-$jv"
       add_note "Java: version $jv from pom.xml"
       add_runtime_candidate "$runtime_version" "$score"
@@ -1019,14 +1019,14 @@ detect_java_kotlin() {
     if [[ "$runtime_version" == "unknown" ]]; then
       local gpv
       gpv="$(extract_gradle_properties_java_version "$module_dir")"
-      if [[ -n "${gpv:-}" ]]; then
+      if [[ -n "${gpv:-}" && $(is_numeric_version "$gpv") ]]; then
         runtime_version="java-$gpv"
         add_note "Java: version $gpv from gradle.properties"
       fi
       if [[ "$runtime_version" == "unknown" ]]; then
         local gfilev
         gfilev="$(extract_gradle_java_version_upwards "$module_dir")"
-        if [[ -n "${gfilev:-}" ]]; then
+        if [[ -n "${gfilev:-}" && $(is_numeric_version "$gfilev") ]]; then
           runtime_version="java-$gfilev"
           add_note "Java: version $gfilev from Gradle files"
         fi
@@ -1034,11 +1034,17 @@ detect_java_kotlin() {
       if [[ "$runtime_version" == "unknown" ]]; then
         local ggrepv
         ggrepv="$(extract_java_version_grep_repo "$module_dir")"
-        if [[ -n "${ggrepv:-}" ]]; then
+        if [[ -n "${ggrepv:-}" && $(is_numeric_version "$ggrepv") ]]; then
           runtime_version="java-$ggrepv"
           add_note "Java: version $ggrepv from repo search"
         fi
       fi
+    fi
+    if [[ "$runtime_version" == "unknown" ]]; then
+      local assumed_java="17"
+      runtime_version="java-$assumed_java"
+      add_note "Java: version $assumed_java assumed (not found explicitly)"
+      add_runtime_candidate "$runtime_version" "$score"
     fi
     local gradle_cmd="./gradlew"
     [[ ! -x "$module_dir/gradlew" ]] && gradle_cmd="gradle"
@@ -1053,7 +1059,7 @@ detect_java_kotlin() {
     if [[ "$runtime_version" == "unknown" ]]; then
       local av
       av="$(extract_ant_java_version "$module_dir/build.xml")"
-      if [[ -n "${av:-}" ]]; then
+      if [[ -n "${av:-}" && $(is_numeric_version "$av") ]]; then
         runtime_version="java-$av"
         add_note "Java: version $av from build.xml"
       fi
@@ -1247,3 +1253,7 @@ run_analyze() {
 
 parse_args "$@"
 run_analyze
+is_numeric_version() {
+  local v="$1"
+  [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]]
+}
