@@ -108,6 +108,11 @@ extract_gradle_compat_version() {
   perl -ne 'if (/sourceCompatibility\s*[= ]\s*"?([^"\s]+)/) { print $1; exit } if (/targetCompatibility\s*[= ]\s*"?([^"\s]+)/) { print $1; exit }' "$file" 2>/dev/null || true
 }
 
+extract_gradle_toolchain_version() {
+  local file="$1"
+  perl -ne 'if (/JavaLanguageVersion\.of\(([^)]+)\)/) { print $1; exit } if (/languageVersion\s*=\s*JavaLanguageVersion\.of\(([^)]+)\)/) { print $1; exit } if (/languageVersion\.set\(JavaLanguageVersion\.of\(([^)]+)\)\)/) { print $1; exit }' "$file" 2>/dev/null || true
+}
+
 #######################################
 # Dockerfile
 #######################################
@@ -702,7 +707,8 @@ detect_java_kotlin() {
     build_tool="maven"
     add_note "Java: pom.xml present"
     local jv
-    jv="$(extract_xml_tag_value "$module_dir/pom.xml" "java.version")"
+    jv="$(extract_xml_tag_value "$module_dir/pom.xml" "maven.compiler.release")"
+    [[ -z "${jv:-}" ]] && jv="$(extract_xml_tag_value "$module_dir/pom.xml" "java.version")"
     [[ -z "${jv:-}" ]] && jv="$(extract_xml_tag_value "$module_dir/pom.xml" "maven.compiler.source")"
     [[ -z "${jv:-}" ]] && jv="$(extract_xml_tag_value "$module_dir/pom.xml" "maven.compiler.target")"
     if [[ -n "${jv:-}" ]]; then
@@ -727,10 +733,11 @@ detect_java_kotlin() {
         runtime_version="java-${BASH_REMATCH[1]}"
         add_note "Java: version ${BASH_REMATCH[1]} from Gradle JavaVersion"
       else
-        gv="$(extract_gradle_compat_version "$gf")"
+        gv="$(extract_gradle_toolchain_version "$gf")"
+        [[ -z "${gv:-}" ]] && gv="$(extract_gradle_compat_version "$gf")"
         if [[ -n "${gv:-}" ]]; then
           runtime_version="java-$gv"
-          add_note "Java: version $gv from Gradle compatibility"
+          add_note "Java: version $gv from Gradle toolchain/compatibility"
         fi
       fi
     fi
