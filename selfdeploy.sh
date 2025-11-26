@@ -97,6 +97,17 @@ json_escape() {
   printf '%s' "$s"
 }
 
+extract_xml_tag_value() {
+  local file="$1"
+  local tag="$2"
+  perl -ne "if (/<${tag}>\\s*([^<]+)/) { print \$1; exit }" "$file" 2>/dev/null || true
+}
+
+extract_gradle_compat_version() {
+  local file="$1"
+  perl -ne 'if (/sourceCompatibility\s*[= ]\s*"?([^"\s]+)/) { print $1; exit } if (/targetCompatibility\s*[= ]\s*"?([^"\s]+)/) { print $1; exit }' "$file" 2>/dev/null || true
+}
+
 #######################################
 # Dockerfile
 #######################################
@@ -691,9 +702,9 @@ detect_java_kotlin() {
     build_tool="maven"
     add_note "Java: pom.xml present"
     local jv
-    jv="$(sed -n 's/.*<java.version>\\([^<]*\\)<\\/java.version>.*/\\1/p' "$module_dir/pom.xml" | head -n1)"
-    [[ -z "${jv:-}" ]] && jv="$(sed -n 's/.*<maven.compiler.source>\\([^<]*\\)<\\/maven.compiler.source>.*/\\1/p' "$module_dir/pom.xml" | head -n1)"
-    [[ -z "${jv:-}" ]] && jv="$(sed -n 's/.*<maven.compiler.target>\\([^<]*\\)<\\/maven.compiler.target>.*/\\1/p' "$module_dir/pom.xml" | head -n1)"
+    jv="$(extract_xml_tag_value "$module_dir/pom.xml" "java.version")"
+    [[ -z "${jv:-}" ]] && jv="$(extract_xml_tag_value "$module_dir/pom.xml" "maven.compiler.source")"
+    [[ -z "${jv:-}" ]] && jv="$(extract_xml_tag_value "$module_dir/pom.xml" "maven.compiler.target")"
     if [[ -n "${jv:-}" ]]; then
       runtime_version="java-$jv"
       add_note "Java: version $jv from pom.xml"
@@ -711,12 +722,12 @@ detect_java_kotlin() {
     [[ -f "$module_dir/build.gradle.kts" ]] && gf="$module_dir/build.gradle.kts"
     if [[ "$runtime_version" == "unknown" ]]; then
       local gv
-      gv="$(grep -m1 -E 'JavaVersion\\.VERSION_|sourceCompatibility|targetCompatibility' "$gf" 2>/dev/null || true)"
+      gv="$(grep -m1 -E 'JavaVersion\\.VERSION_' "$gf" 2>/dev/null || true)"
       if [[ "$gv" =~ JavaVersion\.VERSION_([0-9]+) ]]; then
         runtime_version="java-${BASH_REMATCH[1]}"
         add_note "Java: version ${BASH_REMATCH[1]} from Gradle JavaVersion"
       else
-        gv="$(grep -m1 -E 'sourceCompatibility|targetCompatibility' "$gf" 2>/dev/null | sed -E 's/.*[= ][[:space:]]*\"{0,1}([^\"[:space:]]*).*/\\1/' || true)"
+        gv="$(extract_gradle_compat_version "$gf")"
         if [[ -n "${gv:-}" ]]; then
           runtime_version="java-$gv"
           add_note "Java: version $gv from Gradle compatibility"
