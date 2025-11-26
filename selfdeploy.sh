@@ -631,10 +631,14 @@ repo_agg_runtime_version() {
   local rv="$1"
   local score="$2"
   [[ "$rv" == "unknown" || -z "$rv" ]] && return 0
-  local rv_num="${rv#java-}"
-  if [[ "$rv" == "$rv_num" ]]; then
-    rv_num="$rv"
-  fi
+  local rv_num="$rv"
+  local prefix
+  for prefix in java go node python ruby; do
+    if [[ "$rv" == "$prefix-"* ]]; then
+      rv_num="${rv#"$prefix-"}"
+      break
+    fi
+  done
   is_numeric_version "$rv_num" || return 0
   local i
   for i in "${!REPO_RUNTIME_VERSIONS[@]}"; do
