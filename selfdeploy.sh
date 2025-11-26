@@ -4,7 +4,8 @@
 # Внутри смотрит по модулям (manifest-файлы), снаружи отдаёт один
 # агрегированный JSON по всему репозиторию.
 
-set -euo pipefail
+# Allow probes to continue even when something is missing; keep pipefail for safety.
+set -o pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 
