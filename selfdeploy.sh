@@ -997,7 +997,7 @@ detect_java_kotlin() {
     add_note "Java: pom.xml present"
     local jv
     jv="$(extract_maven_java_version "$module_dir/pom.xml")"
-    if [[ -n "${jv:-}" && is_numeric_version "$jv" ]]; then
+    if is_numeric_version "${jv:-}"; then
       runtime_version="java-$jv"
       add_note "Java: version $jv from pom.xml"
       add_runtime_candidate "$runtime_version" "$score"
@@ -1025,7 +1025,7 @@ detect_java_kotlin() {
       else
         gv="$(extract_gradle_toolchain_version "$gf")"
         [[ -z "${gv:-}" ]] && gv="$(extract_gradle_compat_version "$gf")"
-        if [[ -n "${gv:-}" && is_numeric_version "$gv" ]]; then
+        if is_numeric_version "${gv:-}"; then
           runtime_version="java-$gv"
           add_note "Java: version $gv from Gradle toolchain/compatibility"
           add_runtime_candidate "$runtime_version" "$score"
@@ -1048,7 +1048,7 @@ detect_java_kotlin() {
   if [[ "$runtime_version" == "unknown" ]]; then
     local gpv
     gpv="$(extract_gradle_properties_java_version "$module_dir")"
-    if [[ -n "${gpv:-}" && is_numeric_version "$gpv" ]]; then
+    if is_numeric_version "${gpv:-}"; then
       runtime_version="java-$gpv"
       add_note "Java: version $gpv from gradle.properties"
       add_runtime_candidate "$runtime_version" "$score"
@@ -1056,7 +1056,7 @@ detect_java_kotlin() {
     if [[ "$runtime_version" == "unknown" ]]; then
       local gfilev
       gfilev="$(extract_gradle_java_version_upwards "$module_dir")"
-      if [[ -n "${gfilev:-}" && is_numeric_version "$gfilev" ]]; then
+      if is_numeric_version "${gfilev:-}"; then
         runtime_version="java-$gfilev"
         add_note "Java: version $gfilev from Gradle files"
         add_runtime_candidate "$runtime_version" "$score"
@@ -1065,7 +1065,7 @@ detect_java_kotlin() {
     if [[ "$runtime_version" == "unknown" ]]; then
       local ggrepv
       ggrepv="$(extract_java_version_grep_repo "$module_dir")"
-      if [[ -n "${ggrepv:-}" && is_numeric_version "$ggrepv" ]]; then
+      if is_numeric_version "${ggrepv:-}"; then
         runtime_version="java-$ggrepv"
         add_note "Java: version $ggrepv from repo search"
         add_runtime_candidate "$runtime_version" "$score"
@@ -1086,7 +1086,7 @@ detect_java_kotlin() {
     if [[ "$runtime_version" == "unknown" ]]; then
       local av
       av="$(extract_ant_java_version "$module_dir/build.xml")"
-      if [[ -n "${av:-}" && is_numeric_version "$av" ]]; then
+      if is_numeric_version "${av:-}"; then
         runtime_version="java-$av"
         add_note "Java: version $av from build.xml"
       fi
