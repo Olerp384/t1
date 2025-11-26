@@ -100,7 +100,8 @@ json_escape() {
 
 is_numeric_version() {
   local v="$1"
-  [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]]
+  # Accept simple numeric versions like 17, 1.2 or 1.20.4 (multiple segments).
+  [[ "$v" =~ ^[0-9]+(\.[0-9]+)*$ ]]
 }
 
 extract_xml_tag_value() {
@@ -367,10 +368,14 @@ add_runtime_candidate() {
   local rv="$1"
   local score="$2"
   [[ "$rv" == "unknown" || -z "$rv" ]] && return 0
-  local rv_num="${rv#java-}"
-  if [[ "$rv" == "$rv_num" ]]; then
-    rv_num="$rv"
-  fi
+  local rv_num="$rv"
+  local prefix
+  for prefix in java go node python ruby; do
+    if [[ "$rv" == "$prefix-"* ]]; then
+      rv_num="${rv#"$prefix-"}"
+      break
+    fi
+  done
   is_numeric_version "$rv_num" || return 0
   local i
   for i in "${!RUNTIME_CANDIDATES[@]}"; do
