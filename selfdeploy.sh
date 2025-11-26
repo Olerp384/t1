@@ -97,6 +97,11 @@ json_escape() {
   printf '%s' "$s"
 }
 
+is_numeric_version() {
+  local v="$1"
+  [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]]
+}
+
 extract_xml_tag_value() {
   local file="$1"
   local tag="$2"
@@ -1253,7 +1258,3 @@ run_analyze() {
 
 parse_args "$@"
 run_analyze
-is_numeric_version() {
-  local v="$1"
-  [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]]
-}
