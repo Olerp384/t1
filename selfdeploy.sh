@@ -997,7 +997,7 @@ detect_java_kotlin() {
     add_note "Java: pom.xml present"
     local jv
     jv="$(extract_maven_java_version "$module_dir/pom.xml")"
-    if [[ -n "${jv:-}" && is_numeric_version "$jv" ]]; then
+    if is_numeric_version "${jv:-}"; then
       runtime_version="java-$jv"
       add_note "Java: version $jv from pom.xml"
       add_runtime_candidate "$runtime_version" "$score"
