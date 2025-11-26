@@ -1089,10 +1089,7 @@ detect_java_kotlin() {
     fi
   fi
   if [[ "$runtime_version" == "unknown" ]]; then
-    local assumed_java="17"
-    runtime_version="java-$assumed_java"
-    add_note "Java: version $assumed_java assumed (not found explicitly)"
-    add_runtime_candidate "$runtime_version" "$score"
+    # No explicit Java version found; skip adding a guessed runtime to avoid false positives.
   fi
 
   if [[ -f "$module_dir/build.xml" ]]; then
