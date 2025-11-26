@@ -33,6 +33,7 @@ COMMAND=""
 REPO_URL=""
 LOCAL_PATH=""
 KEEP_CLONE=0
+DO_BUILD=0
 
 parse_args() {
   if [[ $# -eq 0 ]]; then
@@ -69,7 +70,7 @@ parse_args() {
     esac
   done
 
-  if [[ "$COMMAND" != "analyze" ]]; then
+  if [[ "$COMMAND" != "analyze" && "$COMMAND" != "build" ]]; then
     echo "Unknown command: $COMMAND" >&2
     usage
     exit 1
@@ -82,6 +83,10 @@ parse_args() {
   if [[ -z "$REPO_URL" && -z "$LOCAL_PATH" ]]; then
     echo "You must specify either --repo-url or --path." >&2
     exit 1
+  fi
+
+  if [[ "$COMMAND" == "build" ]]; then
+    DO_BUILD=1
   fi
 }
 
@@ -334,6 +339,7 @@ ENV_FILES_JSON="[]"
 LICENSES_JSON="[]"
 CI_GITLAB="false"
 CI_GITHUB="false"
+DO_BUILD=0
 
 declare -a NOTES=()
 declare -a RUNTIME_CANDIDATES=()
@@ -496,6 +502,15 @@ declare -a REPO_PACKAGE_MANAGER_SCORES=()
 declare -a REPO_PORTS=()
 declare -a REPO_PORT_SCORES=()
 declare -a MODULE_JSONS=()
+declare -a MODULE_LANGS=()
+declare -a MODULE_FRAMEWORKS=()
+declare -a MODULE_BUILD_TOOLS=()
+declare -a MODULE_TEST_TOOLS=()
+declare -a MODULE_ARTIFACT_TYPES=()
+declare -a MODULE_RUNTIME_VERSIONS=()
+declare -a MODULE_BUILD_CMDS=()
+declare -a MODULE_TEST_CMDS=()
+declare -a MODULE_PACKAGE_MANAGERS=()
 
 repo_reset() {
   REPO_LANGS=()
@@ -520,6 +535,15 @@ repo_reset() {
   REPO_PORTS=()
   REPO_PORT_SCORES=()
   MODULE_JSONS=()
+  MODULE_LANGS=()
+  MODULE_FRAMEWORKS=()
+  MODULE_BUILD_TOOLS=()
+  MODULE_TEST_TOOLS=()
+  MODULE_ARTIFACT_TYPES=()
+  MODULE_RUNTIME_VERSIONS=()
+  MODULE_BUILD_CMDS=()
+  MODULE_TEST_CMDS=()
+  MODULE_PACKAGE_MANAGERS=()
 }
 
 repo_agg_lang() {
@@ -792,6 +816,15 @@ EOF
 )"
 
   MODULE_JSONS+=("$module_json")
+  MODULE_LANGS+=("$LANGUAGE")
+  MODULE_FRAMEWORKS+=("$FRAMEWORK")
+  MODULE_BUILD_TOOLS+=("$BUILD_TOOL")
+  MODULE_TEST_TOOLS+=("$TEST_TOOL")
+  MODULE_ARTIFACT_TYPES+=("$ARTIFACT_TYPE")
+  MODULE_RUNTIME_VERSIONS+=("$runtime_best")
+  MODULE_BUILD_CMDS+=("$build_cmd_best")
+  MODULE_TEST_CMDS+=("$test_cmd_best")
+  MODULE_PACKAGE_MANAGERS+=("$package_manager")
 }
 
 repo_add_note() {
@@ -1499,7 +1532,121 @@ run_analyze() {
   [[ -z "$dockerfiles_json" ]] && dockerfiles_json="[]"
   [[ -z "$compose_json" ]] && compose_json="[]"
 
-  print_repo_json_v2 "$root" "$dockerflag" "$dockerfiles_json" "$compose_json"
+  if (( DO_BUILD == 1 )); then
+    run_build "$root" "$dockerflag" "$dockerfiles_json" "$compose_json"
+  else
+    print_repo_json_v2 "$root" "$dockerflag" "$dockerfiles_json" "$compose_json"
+  fi
+}
+
+choose_python_module() {
+  local best_idx=-1
+  local best_score=-1
+  local i
+  for i in "${!MODULE_LANGS[@]}"; do
+    [[ "${MODULE_LANGS[$i]}" != "python" ]] && continue
+    local sc=0
+    local fw="${MODULE_FRAMEWORKS[$i]}"
+    local pm="${MODULE_PACKAGE_MANAGERS[$i]}"
+    local rel="${MODULE_RELS[$i]}"
+    if [[ "$fw" == "django" ]]; then
+      sc=$((sc+40))
+    elif [[ "$fw" == "fastapi" || "$fw" == "asgi-generic" || "$fw" == "asgi-wsgi-generic" ]]; then
+      sc=$((sc+30))
+    elif [[ "$fw" != "none" ]]; then
+      sc=$((sc+10))
+    fi
+    if [[ "$pm" == "poetry" ]]; then
+      sc=$((sc+10))
+    fi
+    if [[ "$rel" == "." ]]; then
+      sc=$((sc+5))
+    fi
+    if (( sc > best_score )); then
+      best_score=$sc
+      best_idx=$i
+    fi
+  done
+  echo "$best_idx"
+}
+
+copy_python_templates() {
+  local template_name="$1"
+  local target_dir="$2"
+  local py_ver="$3"
+
+  local script_dir
+  script_dir="$(cd "$(dirname "$0")" && pwd)"
+  local templates_root="$script_dir/docker-templates"
+  local src_dir="$templates_root/$template_name"
+  local src_file="$src_dir/Dockerfile"
+  local compose_src="$templates_root/python-compose/docker-compose.yml"
+
+  if [[ ! -f "$src_file" ]]; then
+    echo "Template not found: $src_file" >&2
+    return 1
+  fi
+
+  local target_docker="$target_dir/Dockerfile"
+  if [[ -f "$target_docker" ]]; then
+    echo "Dockerfile already exists at $target_docker, skipping copy"
+  else
+    cp "$src_file" "$target_docker"
+    if [[ -n "$py_ver" ]]; then
+      # Replace default PYTHON_VERSION if present.
+      sed -i'' -e "s/^ARG PYTHON_VERSION=.*/ARG PYTHON_VERSION=$py_ver/" "$target_docker"
+    fi
+    echo "Copied Dockerfile from $template_name to $target_docker"
+  fi
+
+  local target_compose="$target_dir/docker-compose.yml"
+  if [[ -f "$target_compose" ]]; then
+    echo "docker-compose.yml already exists at $target_compose, skipping copy"
+  else
+    cp "$compose_src" "$target_compose"
+    # Adjust command based on template_name
+    case "$template_name" in
+      python-uvicorn)
+        sed -i'' -e 's#\\["python", "main.py"\\]#["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]#' "$target_compose"
+        ;;
+      python-gunicorn)
+        sed -i'' -e 's#\\["python", "main.py"\\]#["gunicorn", "project.wsgi:application", "--bind", "0.0.0.0:8000"]#' "$target_compose"
+        ;;
+      python-poetry|python-pip)
+        : # default command already python main.py
+        ;;
+    esac
+    echo "Copied docker-compose template to $target_compose"
+  fi
+}
+
+run_build() {
+  local root="$1"
+  local idx
+  idx="$(choose_python_module)"
+  if [[ "$idx" == "-1" || -z "$idx" ]]; then
+    echo "No Python module detected to build." >&2
+    exit 1
+  fi
+
+  local module_dir="${MODULE_DIRS[$idx]}"
+  local framework="${MODULE_FRAMEWORKS[$idx]}"
+  local pm="${MODULE_PACKAGE_MANAGERS[$idx]}"
+  local runtime="${MODULE_RUNTIME_VERSIONS[$idx]}"
+  local py_ver="${runtime#python-}"
+  [[ "$py_ver" == "$runtime" ]] && py_ver=""
+
+  local template="python-pip"
+  if [[ "$framework" == "django" ]]; then
+    template="python-gunicorn"
+  elif [[ "$framework" == "fastapi" || "$framework" == "asgi-generic" || "$framework" == "asgi-wsgi-generic" ]]; then
+    template="python-uvicorn"
+  elif [[ "$pm" == "poetry" ]]; then
+    template="python-poetry"
+  fi
+
+  copy_python_templates "$template" "$module_dir" "$py_ver"
+  echo "Build assets prepared using template '$template' in module $module_dir"
 }
 
 print_repo_json_v2() {
